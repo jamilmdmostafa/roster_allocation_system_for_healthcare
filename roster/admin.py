@@ -1,6 +1,12 @@
 from django.contrib import admin
 from .models import StaffProfile, Shift, ShiftResponse, AuditLog
 
+from django.contrib import admin
+
+admin.site.site_header = "Roster Management"
+admin.site.site_title = "Roster Management"
+admin.site.index_title = "Site Administration"
+
 @admin.register(StaffProfile)
 class StaffProfileAdmin(admin.ModelAdmin):
     list_display = ("user", "phone_number", "role", "is_available")
