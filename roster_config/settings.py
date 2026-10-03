@@ -16,6 +16,11 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+# Where to send people for login, after login, and after logout
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "home"
+LOGOUT_REDIRECT_URL = "login"
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 

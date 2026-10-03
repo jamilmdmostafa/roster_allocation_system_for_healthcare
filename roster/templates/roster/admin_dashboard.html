@@ -1,0 +1,86 @@
+{% extends "roster/base.html" %}
+{% block title %}Dashboard | Roster Management{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Dashboard</h1>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3"><div class="card"><div class="card-body">
+    <div class="help">Today's shifts</div><div class="fs-3 fw-bold">{{ todays_shifts|length }}</div>
+  </div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card"><div class="card-body">
+    <div class="help">Open shifts (not covered)</div><div class="fs-3 fw-bold">{{ open_shifts_count }}</div>
+  </div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card"><div class="card-body">
+    <div class="help">Guards</div><div class="fs-3 fw-bold">{{ guard_count }}</div>
+  </div></div></div>
+  <div class="col-sm-6 col-xl-3"><div class="card"><div class="card-body">
+    <div class="help">Unread notifications</div><div class="fs-3 fw-bold">{{ unread_count }}</div>
+  </div></div></div>
+</div>
+
+<div class="row g-4">
+  <!-- Today's shifts -->
+  <div class="col-xl-8">
+    <div class="card">
+      <div class="card-header fw-semibold">Today's shifts - {{ today|date:"l, d F Y" }}</div>
+      {% if todays_shifts %}
+        <div class="table-responsive">
+          <table class="table mb-0 align-middle">
+            <thead>
+              <tr><th>Hospital</th><th>Ward</th><th>Date</th><th>Time</th><th>Covering guard</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              {% for shift in todays_shifts %}
+                <tr>
+                  <td>{{ shift.hospital_name }}</td>
+                  <td>{{ shift.ward }}</td>
+                  <td>{{ shift.start_at|date:"d M Y" }}</td>
+                  <td>{{ shift.start_at|date:"H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
+                  <td>
+                    {% if shift.assigned_guard %}
+                      {{ shift.assigned_guard.full_name }} <span class="help">({{ shift.assigned_guard.staff_id }})</span>
+                    {% else %}
+                      <span class="badge bg-danger">Not covered</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ shift.get_status_display }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="card-body">No shifts today.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Notifications -->
+  <div class="col-xl-4">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Notifications</span>
+        {% if unread_count %}
+          <form method="post" action="{% url 'mark_notifications_read' %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Mark all read</button>
+          </form>
+        {% endif %}
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for n in notifications %}
+          <li class="list-group-item {% if n.kind == 'CANCELLATION' %}notif-cancel{% elif not n.is_read %}notif-unread{% endif %}">
+            <div class="fw-semibold">{{ n.get_kind_display }}</div>
+            <div>{{ n.message }}</div>
+            <div class="help">{{ n.created_at|date:"d M Y, H:i" }}</div>
+          </li>
+        {% empty %}
+          <li class="list-group-item">No notifications yet.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}
