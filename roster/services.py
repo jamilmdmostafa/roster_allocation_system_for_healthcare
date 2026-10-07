@@ -61,7 +61,8 @@ def send_welcome_email(profile, temp_password, login_url):
         message=(
             f"Hi {profile.user.first_name},\n\n"
             f"An account has been created for you on Roster Management.\n\n"
-            f"Staff ID (your login): {profile.staff_id}\n"
+            f"Staff ID: {profile.staff_id}\n"
+            f"You can log in with your Staff ID or this email address.\n"
             f"Temporary password: {temp_password}\n"
             f"Log in here: {login_url}\n\n"
             f"Please change your password after your first login "

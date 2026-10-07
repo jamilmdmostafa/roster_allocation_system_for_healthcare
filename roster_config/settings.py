@@ -143,3 +143,6 @@ MAILERS = {
 # Development: emails are printed in the terminal instead of being sent.
 # We switch to real email in Phase 7.
 DEFAULT_FROM_EMAIL = "Roster Management <noreply@roster.local>"
+
+# Allow login with staff ID or email
+AUTHENTICATION_BACKENDS = ["roster.backends.StaffIdOrEmailBackend"]

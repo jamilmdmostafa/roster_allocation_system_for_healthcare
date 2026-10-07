@@ -9,14 +9,14 @@
         <h1 class="h4 mb-4 text-center">Sign in</h1>
 
         {% if form.errors %}
-          <div class="alert alert-danger">Incorrect staff ID or password. Please try again.</div>
+          <div class="alert alert-danger">Incorrect staff ID / email or password. Please try again.</div>
         {% endif %}
 
         <form method="post">
           {% csrf_token %}
-          <label for="id_username" class="form-label fw-semibold">Staff ID</label>
+          <label for="id_username" class="form-label fw-semibold">Staff ID or email</label>
           <input type="text" name="username" id="id_username" class="form-control mb-3"
-                 placeholder="e.g. guard01" required autofocus>
+                 placeholder="e.g. guard01 or name@example.com" required autofocus>
 
           <label for="id_password" class="form-label fw-semibold">Password</label>
           <input type="password" name="password" id="id_password" class="form-control mb-4" required>
