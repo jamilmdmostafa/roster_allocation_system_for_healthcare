@@ -1,0 +1,74 @@
+{% extends "roster/base.html" %}
+{% block title %}Users | Roster Management{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Users</h1>
+  <a href="{% url 'user_add' %}" class="btn btn-brand">+ Add New User</a>
+</div>
+
+<!-- Search -->
+<form method="get" class="card card-body mb-4">
+  <div class="row g-2 align-items-end">
+    <div class="col-md-6">
+      <label for="q" class="form-label fw-semibold">Search</label>
+      <input type="text" id="q" name="q" value="{{ query }}" class="form-control"
+             placeholder="Name, email, phone number or staff ID">
+    </div>
+    <div class="col-md-3">
+      <label for="role" class="form-label fw-semibold">Role</label>
+      <select id="role" name="role" class="form-select">
+        <option value="">All roles</option>
+        {% for value, label in roles %}
+          <option value="{{ value }}" {% if value == role %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3 d-flex gap-2">
+      <button type="submit" class="btn btn-brand flex-fill">Search</button>
+      <a href="{% url 'user_list' %}" class="btn btn-outline-secondary flex-fill">Clear</a>
+    </div>
+  </div>
+</form>
+
+<!-- Results -->
+<div class="card">
+  <div class="table-responsive">
+    <table class="table mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Role</th><th>Staff ID</th><th>Name</th><th>Email</th><th>Phone</th>
+          <th>Licence no.</th><th>Shifts done</th><th>Upcoming</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for person in people %}
+          <tr>
+            <td>
+              {% if person.is_admin %}
+                <span class="badge bg-dark">Admin</span>
+              {% else %}
+                <span class="badge" style="background-color: #3048AC;">Guard</span>
+              {% endif %}
+            </td>
+            <td>{{ person.staff_id }}</td>
+            <td>{{ person.full_name }}</td>
+            <td>{{ person.user.email }}</td>
+            <td>{{ person.phone_number }}</td>
+            <td>{{ person.license_number|default:"-" }}</td>
+            <td>{{ person.done_count }}</td>
+            <td>{{ person.upcoming_count }}</td>
+            <td class="text-nowrap">
+              <a href="{% url 'user_detail' person.staff_id %}" class="btn btn-sm btn-outline-secondary">View</a>
+              <a href="{% url 'user_edit' person.staff_id %}" class="btn btn-sm btn-outline-secondary">Edit</a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="9">No users match your search.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="help mt-2">{{ people|length }} user{{ people|length|pluralize }} shown.</p>
+{% endblock %}

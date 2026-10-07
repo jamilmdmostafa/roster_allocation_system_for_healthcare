@@ -139,3 +139,7 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+# Development: emails are printed in the terminal instead of being sent.
+# We switch to real email in Phase 7.
+DEFAULT_FROM_EMAIL = "Roster Management <noreply@roster.local>"

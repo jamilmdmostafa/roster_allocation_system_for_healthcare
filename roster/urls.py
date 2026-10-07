@@ -21,7 +21,9 @@ urlpatterns = [
     # Admin pages
     path("dashboard/", views.admin_dashboard, name="admin_dashboard"),
     path("users/", views.user_list, name="user_list"),
-    path("users/add/", views.user_add, name="user_add"),
+    path("users/add/", views.user_add, name="user_add"),  # must stay ABOVE the <staff_id> lines
+    path("users/<str:staff_id>/", views.user_detail, name="user_detail"),
+    path("users/<str:staff_id>/edit/", views.user_edit, name="user_edit"),
     path("shifts/create/", views.shift_create, name="shift_create"),
     path("shifts/responses/", views.shift_responses, name="shift_responses"),
 

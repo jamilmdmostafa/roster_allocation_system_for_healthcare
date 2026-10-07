@@ -1,13 +1,23 @@
 from datetime import timedelta
 
+from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import redirect, render
+from django.db.models import Count, F, Q, Value
+from django.db.models.functions import Replace
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from django.views.decorators.http import require_POST
 
 from .decorators import admin_required, guard_required
-from .models import Shift, StaffProfile
+from .forms import StaffForm, profile_initial
+from .models import AuditLog, Shift, StaffProfile
+from .services import create_staff_member, send_welcome_email, update_staff_member
 
+
+# ---------------------------------------------------------------- Home & dashboards
 
 @login_required
 def home(request):
@@ -69,20 +79,138 @@ def mark_notifications_read(request):
     return redirect("home")
 
 
-# ---- Placeholder pages, replaced in later phases ----
+# ---------------------------------------------------------------- User management (admin)
 
-def _coming_soon(request, title, phase):
-    return render(request, "roster/coming_soon.html", {"title": title, "phase": phase})
-
-
-@admin_required
-def user_add(request):
-    return _coming_soon(request, "Add New User", 3)
+def _phone_without_symbols():
+    """Phone number with spaces, brackets and dashes removed, so '0812345678' finds '(08) 1234 5678'."""
+    expression = F("phone_number")
+    for symbol in (" ", "(", ")", "-"):
+        expression = Replace(expression, Value(symbol), Value(""))
+    return expression
 
 
 @admin_required
 def user_list(request):
-    return _coming_soon(request, "Users", 3)
+    query = request.GET.get("q", "").strip()
+    role = request.GET.get("role", "")
+    now = timezone.now()
+    assigned = Q(assigned_shifts__status=Shift.Status.ASSIGNED)
+
+    people = StaffProfile.objects.select_related("user").annotate(
+        done_count=Count("assigned_shifts", filter=assigned & Q(assigned_shifts__end_at__lt=now)),
+        upcoming_count=Count("assigned_shifts", filter=assigned & Q(assigned_shifts__end_at__gte=now)),
+        phone_plain=_phone_without_symbols(),
+    )
+
+    # Every word typed must match at least one of these fields
+    for word in query.split():
+        people = people.filter(
+            Q(staff_id__icontains=word)
+            | Q(user__first_name__icontains=word)
+            | Q(user__last_name__icontains=word)
+            | Q(user__email__icontains=word)
+            | Q(phone_plain__icontains=word)
+        )
+
+    if role in StaffProfile.Role.values:
+        people = people.filter(role=role)
+
+    context = {
+        "people": people,
+        "query": query,
+        "role": role,
+        "roles": StaffProfile.Role.choices,
+    }
+    return render(request, "roster/user_list.html", context)
+
+
+@admin_required
+def user_add(request):
+    if request.method == "POST":
+        form = StaffForm(request.POST)
+        if form.is_valid():
+            temp_password = get_random_string(12)  # cryptographically secure random string
+            profile = create_staff_member(**form.cleaned_data, password=temp_password)
+            send_welcome_email(profile, temp_password, request.build_absolute_uri(reverse("login")))
+
+            AuditLog.objects.create(
+                actor=request.user.username,
+                action="USER_CREATED",
+                details=f"{profile.staff_id} ({profile.get_role_display()})",
+            )
+            messages.success(
+                request,
+                f"{profile.full_name} created with ID {profile.staff_id}. "
+                f"Login details were emailed to {profile.user.email}.",
+            )
+            if settings.DEBUG:
+                # Development only, so you can test logging in as the new user
+                messages.info(request, f"Development only - temporary password: {temp_password}")
+            return redirect("user_detail", staff_id=profile.staff_id)
+    else:
+        form = StaffForm()
+
+    return render(request, "roster/user_form.html", {
+        "form": form,
+        "title": "Add New User",
+        "button_label": "Create user",
+        "cancel_url": reverse("user_list"),
+    })
+
+
+@admin_required
+def user_detail(request, staff_id):
+    person = get_object_or_404(StaffProfile.objects.select_related("user"), staff_id=staff_id)
+    return render(request, "roster/user_detail.html", {
+        "person": person,
+        "completed": person.completed_shifts(),
+        "upcoming": person.upcoming_shifts(),
+    })
+
+
+@admin_required
+def user_edit(request, staff_id):
+    person = get_object_or_404(StaffProfile.objects.select_related("user"), staff_id=staff_id)
+    detail_url = reverse("user_detail", args=[person.staff_id])
+    return _edit_profile(request, person, title=f"Edit {person.staff_id}",
+                         done_url=detail_url, cancel_url=detail_url)
+
+
+# ---------------------------------------------------------------- Guard's own profile
+
+@guard_required
+def my_profile(request):
+    return _edit_profile(request, request.user.profile, title="My Profile",
+                         done_url=reverse("my_profile"), cancel_url=reverse("guard_dashboard"))
+
+
+def _edit_profile(request, person, *, title, done_url, cancel_url):
+    """Shared edit logic for admins editing anyone and guards editing themselves."""
+    if request.method == "POST":
+        form = StaffForm(request.POST, user=person.user, role=person.role)
+        if form.is_valid():
+            update_staff_member(person, **form.cleaned_data)
+            AuditLog.objects.create(
+                actor=request.user.username, action="USER_UPDATED", details=person.staff_id,
+            )
+            messages.success(request, "Profile updated.")
+            return redirect(done_url)
+    else:
+        form = StaffForm(user=person.user, role=person.role, initial=profile_initial(person))
+
+    return render(request, "roster/user_form.html", {
+        "form": form,
+        "title": title,
+        "person": person,
+        "button_label": "Save changes",
+        "cancel_url": cancel_url,
+    })
+
+
+# ---------------------------------------------------------------- Placeholders (later phases)
+
+def _coming_soon(request, title, phase):
+    return render(request, "roster/coming_soon.html", {"title": title, "phase": phase})
 
 
 @admin_required
@@ -93,8 +221,3 @@ def shift_create(request):
 @admin_required
 def shift_responses(request):
     return _coming_soon(request, "Shift Responses", 5)
-
-
-@guard_required
-def my_profile(request):
-    return _coming_soon(request, "My Profile", 6)

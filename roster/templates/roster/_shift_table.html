@@ -1,0 +1,20 @@
+{% if shifts %}
+  <div class="table-responsive">
+    <table class="table mb-0 align-middle">
+      <thead><tr><th>Hospital</th><th>Ward</th><th>Date</th><th>Time</th><th>Uniform</th></tr></thead>
+      <tbody>
+        {% for shift in shifts %}
+          <tr>
+            <td>{{ shift.hospital_name }}</td>
+            <td>{{ shift.ward }}</td>
+            <td>{{ shift.start_at|date:"D d M Y" }}</td>
+            <td>{{ shift.start_at|date:"H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
+            <td>{{ shift.uniform|default:"-" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="card-body">{{ empty_text }}</div>
+{% endif %}
