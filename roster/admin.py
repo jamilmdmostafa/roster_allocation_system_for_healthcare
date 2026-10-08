@@ -48,11 +48,12 @@ class StaffProfileAdmin(admin.ModelAdmin):
     readonly_fields = ("staff_id",)
 
     def has_add_permission(self, request):
+        
+        # New users are created through the web app so they get a proper ID.
+        return False
     def has_delete_permission(self, request, obj=None):
         # Staff records are kept for the audit history, never deleted.
         return False
-        # New users are created through the web app so they get a proper ID.
-       
 
 
 @admin.register(Shift)
