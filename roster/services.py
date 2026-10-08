@@ -8,6 +8,18 @@ from django.utils import timezone
 
 from .models import MIN_REST_HOURS, AuditLog, Notification, Shift, ShiftResponse, StaffProfile
 
+# Reasons a guard can't take a shift (used in messages and checks)
+REASON_OVERLAP = "already working at that time"
+REASON_REST = f"less than {MIN_REST_HOURS} hours' rest between shifts"
+
+
+class ShiftUnavailable(Exception):
+    """The action can't go ahead. The message explains why."""
+
+
+class RestRuleWarning(Exception):
+    """Admin tried to assign a guard who hasn't had 6 hours' rest. Can be overridden."""
+
 
 # ================================================================ Users
 
@@ -78,7 +90,7 @@ def send_welcome_email(profile, temp_password, login_url):
     )
 
 
-# ================================================================ Shifts
+# ================================================================ Shift helpers
 
 def shift_summary(shift):
     """Readable date and time, e.g. 'Sun 05 Oct 2026, 22:00-06:00 (finishes next day)'."""
@@ -93,7 +105,7 @@ def shift_summary(shift):
 def check_guard_availability(guard, shift):
     """
     Can this guard work this shift?
-    Returns None if yes, or a short reason if not.
+    Returns None if yes, otherwise REASON_OVERLAP or REASON_REST.
 
     A clash is any shift the guard is already assigned to that starts less than
     6 hours after this one ends, AND ends less than 6 hours before this one starts.
@@ -108,9 +120,9 @@ def check_guard_availability(guard, shift):
 
     for other in clashes:
         if other.start_at < shift.end_at and other.end_at > shift.start_at:
-            return "already working at that time"
+            return REASON_OVERLAP
     if clashes.exists():
-        return f"less than {MIN_REST_HOURS} hours' rest between shifts"
+        return REASON_REST
     return None
 
 
@@ -130,14 +142,16 @@ def find_eligible_guards(shift):
     return eligible, skipped
 
 
-def send_new_shift_email(guard, shift, dashboard_url):
-    """Information-only email with the shift details (no button)."""
-    start = timezone.localtime(shift.start_at)
+def _notify_admins(kind, shift, message):
+    """Put a notification on every admin's dashboard."""
+    for admin in StaffProfile.objects.filter(role=StaffProfile.Role.ADMIN, user__is_active=True):
+        Notification.objects.create(recipient=admin, kind=kind, shift=shift, message=message[:255])
+
+
+# ================================================================ Emails
+
+def _shift_detail_lines(shift):
     lines = [
-        f"Hi {guard.user.first_name},",
-        "",
-        "A new shift is available:",
-        "",
         f"Hospital: {shift.hospital_name}",
         f"Ward: {shift.ward}",
         f"When: {shift_summary(shift)}",
@@ -145,19 +159,62 @@ def send_new_shift_email(guard, shift, dashboard_url):
     ]
     if shift.rules:
         lines += ["", "Rules / notes:", shift.rules]
+    return lines
+
+
+def _send_email(subject, lines, recipient):
+    """Send one email. Returns False instead of crashing if it fails (e.g. mail server down)."""
+    try:
+        send_mail(
+            subject=subject,
+            message="\n".join(lines),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[recipient],
+        )
+        return True
+    except Exception:
+        return False
+
+
+def send_new_shift_email(guard, shift, dashboard_url):
+    """Information-only email with the shift details (no button)."""
+    start = timezone.localtime(shift.start_at)
+    lines = [f"Hi {guard.user.first_name},", "", "A new shift is available:", ""]
+    lines += _shift_detail_lines(shift)
     lines += [
         "",
         "To accept this shift, log in to your dashboard. "
         "The first guard to accept gets the shift.",
         dashboard_url,
     ]
-    send_mail(
-        subject=f"New shift: {shift.hospital_name} - {shift.ward}, {start:%d %b}",
-        message="\n".join(lines),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[guard.user.email],
+    return _send_email(
+        f"New shift: {shift.hospital_name} - {shift.ward}, {start:%d %b}", lines, guard.user.email
     )
 
+
+def send_assigned_email(guard, shift):
+    start = timezone.localtime(shift.start_at)
+    lines = [f"Hi {guard.user.first_name},", "", "You have been assigned this shift:", ""]
+    lines += _shift_detail_lines(shift)
+    lines += ["", "If you can no longer work it, please cancel it from your dashboard as early as possible."]
+    return _send_email(
+        f"Shift confirmed: {shift.hospital_name} - {shift.ward}, {start:%d %b}", lines, guard.user.email
+    )
+
+
+def send_removed_email(guard, shift):
+    start = timezone.localtime(shift.start_at)
+    lines = [
+        f"Hi {guard.user.first_name},", "",
+        "An admin has given this shift to another guard, so you are no longer assigned to it:", "",
+    ]
+    lines += _shift_detail_lines(shift)
+    return _send_email(
+        f"Shift change: {shift.hospital_name} - {shift.ward}, {start:%d %b}", lines, guard.user.email
+    )
+
+
+# ================================================================ Releasing, accepting, assigning
 
 def release_shift(shift, *, actor, dashboard_url):
     """
@@ -169,7 +226,6 @@ def release_shift(shift, *, actor, dashboard_url):
     eligible, skipped = find_eligible_guards(shift)
     summary = shift_summary(shift)
 
-    # Database work happens all-or-nothing
     with transaction.atomic():
         AuditLog.objects.create(
             shift=shift, actor=actor, action="SHIFT_CREATED",
@@ -190,17 +246,115 @@ def release_shift(shift, *, actor, dashboard_url):
         )
 
     # Emails are sent after saving. One failed email doesn't stop the others.
-    email_failed = []
-    for guard in eligible:
-        try:
-            send_new_shift_email(guard, shift, dashboard_url)
-        except Exception:  # e.g. mail server unreachable
-            email_failed.append(guard.staff_id)
-
+    email_failed = [g.staff_id for g in eligible if not send_new_shift_email(g, shift, dashboard_url)]
     if email_failed:
         AuditLog.objects.create(
-            shift=shift, actor="system", action="EMAIL_FAILED",
-            details=", ".join(email_failed),
+            shift=shift, actor="system", action="EMAIL_FAILED", details=", ".join(email_failed),
         )
 
     return {"eligible": eligible, "skipped": skipped, "email_failed": email_failed}
+
+
+def accept_shift(response):
+    """
+    A guard clicks Accept. The FIRST guard to accept gets the shift.
+
+    select_for_update() locks the shift's database row until this transaction ends.
+    If two guards click at the same moment, the second request waits for the lock,
+    then sees the shift is already assigned - so two guards can never both get it.
+    """
+    guard = response.guard
+    with transaction.atomic():
+        shift = Shift.objects.select_for_update().get(pk=response.shift_id)
+        # Also lock the guard, so the same guard can't grab two clashing shifts at once
+        StaffProfile.objects.select_for_update().get(pk=guard.pk)
+
+        if shift.status != Shift.Status.OPEN:
+            raise ShiftUnavailable("Sorry, this shift has already been taken.")
+        if shift.start_at <= timezone.now():
+            raise ShiftUnavailable("This shift has already started.")
+        reason = check_guard_availability(guard, shift)
+        if reason:
+            raise ShiftUnavailable(f"You can't take this shift: {reason}.")
+
+        response.accepted_at = timezone.now()
+        response.save(update_fields=["accepted_at"])
+        shift.status = Shift.Status.ASSIGNED
+        shift.assigned_guard = guard
+        shift.save()
+
+        summary = shift_summary(shift)
+        _notify_admins(
+            Notification.Kind.ACCEPTED, shift,
+            f"{guard.staff_id} ({guard.full_name}) accepted {shift.hospital_name} - {shift.ward}, {summary}",
+        )
+        Notification.objects.create(
+            recipient=guard, kind=Notification.Kind.ASSIGNED, shift=shift,
+            message=f"You got the shift: {shift.hospital_name} - {shift.ward}, {summary}"[:255],
+        )
+        AuditLog.objects.create(
+            shift=shift, actor=guard.staff_id, action="SHIFT_ACCEPTED",
+            details=f"Accepted at {timezone.localtime(response.accepted_at):%d %b %Y %H:%M:%S}",
+        )
+
+    send_assigned_email(guard, shift)
+    return shift
+
+
+def assign_shift(shift, guard, *, actor, override_rest=False):
+    """
+    Admin assigns (or reassigns) a shift to any guard.
+    - Overlapping shifts are always blocked: nobody can be in two places at once.
+    - The 6-hour rest rule raises a warning that the admin can choose to override.
+    """
+    with transaction.atomic():
+        shift = Shift.objects.select_for_update().get(pk=shift.pk)
+        StaffProfile.objects.select_for_update().get(pk=guard.pk)
+
+        if shift.status == Shift.Status.CANCELLED:
+            raise ShiftUnavailable("This shift has been cancelled.")
+        if shift.end_at <= timezone.now():
+            raise ShiftUnavailable("This shift has already finished.")
+
+        previous = shift.assigned_guard
+        if previous and previous.pk == guard.pk:
+            raise ShiftUnavailable(f"{guard.staff_id} is already assigned to this shift.")
+
+        reason = check_guard_availability(guard, shift)
+        if reason == REASON_OVERLAP:
+            raise ShiftUnavailable(
+                f"{guard.staff_id} is {REASON_OVERLAP}. A guard can't work two shifts at once."
+            )
+        if reason == REASON_REST and not override_rest:
+            raise RestRuleWarning(f"{guard.staff_id} would have {REASON_REST}.")
+
+        shift.assigned_guard = guard
+        shift.status = Shift.Status.ASSIGNED
+        shift.save()
+
+        summary = shift_summary(shift)
+        Notification.objects.create(
+            recipient=guard, kind=Notification.Kind.ASSIGNED, shift=shift,
+            message=f"An admin assigned you: {shift.hospital_name} - {shift.ward}, {summary}"[:255],
+        )
+        if previous:
+            Notification.objects.create(
+                recipient=previous, kind=Notification.Kind.CANCELLATION, shift=shift,
+                message=f"You are no longer assigned to: {shift.hospital_name} - {shift.ward}, {summary}"[:255],
+            )
+
+        details = guard.staff_id
+        if previous:
+            details += f" (replacing {previous.staff_id})"
+        if reason == REASON_REST:
+            details += " - 6-hour rest rule overridden by admin"
+        AuditLog.objects.create(
+            shift=shift, actor=actor,
+            action="SHIFT_REASSIGNED" if previous else "SHIFT_ASSIGNED",
+            details=details,
+        )
+
+    send_assigned_email(guard, shift)
+    if previous:
+        send_removed_email(previous, shift)
+    return shift

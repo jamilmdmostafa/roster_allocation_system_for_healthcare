@@ -13,11 +13,23 @@ from django.views.decorators.http import require_POST
 
 from .decorators import admin_required, guard_required
 from .forms import ShiftForm, StaffForm, profile_initial
-from .models import AuditLog, Shift, StaffProfile
-from .services import create_staff_member, release_shift, send_welcome_email, update_staff_member
+from .models import AuditLog, Shift, ShiftResponse, StaffProfile
+from .services import (
+    REASON_OVERLAP,
+    RestRuleWarning,
+    ShiftUnavailable,
+    accept_shift,
+    assign_shift,
+    check_guard_availability,
+    create_staff_member,
+    release_shift,
+    send_welcome_email,
+    shift_summary,
+    update_staff_member,
+)
 
 
-# ---------------------------------------------------------------- Home & dashboards
+# ================================================================ Home & dashboards
 
 @login_required
 def home(request):
@@ -61,13 +73,46 @@ def admin_dashboard(request):
 @guard_required
 def guard_dashboard(request):
     profile = request.user.profile
+
+    # Shifts offered to this guard that nobody has taken yet and haven't started
+    open_offers = (
+        profile.shift_responses
+        .filter(shift__status=Shift.Status.OPEN, shift__start_at__gt=timezone.now())
+        .select_related("shift")
+        .order_by("shift__start_at")
+    )
+    # Pair each offer with None (can accept) or the reason they can't
+    offers = [(offer, check_guard_availability(profile, offer.shift)) for offer in open_offers]
+
     context = {
+        "offers": offers,
         "upcoming_shifts": profile.upcoming_shifts(),
         "previous_shifts": profile.completed_shifts(),
         "notifications": profile.notifications.select_related("shift")[:10],
         "unread_count": profile.notifications.filter(is_read=False).count(),
     }
     return render(request, "roster/guard_dashboard.html", context)
+
+
+@guard_required
+@require_POST
+def shift_accept(request, response_id):
+    # guard=... means a guard can only ever accept offers that were made to THEM
+    offer = get_object_or_404(
+        ShiftResponse.objects.select_related("shift", "guard__user"),
+        pk=response_id, guard=request.user.profile,
+    )
+    try:
+        shift = accept_shift(offer)
+    except ShiftUnavailable as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(
+            request,
+            f"You got the shift: {shift.hospital_name} - {shift.ward}, {shift_summary(shift)}. "
+            f"The details have been emailed to you.",
+        )
+    return redirect("guard_dashboard")
 
 
 @login_required
@@ -79,7 +124,7 @@ def mark_notifications_read(request):
     return redirect("home")
 
 
-# ---------------------------------------------------------------- User management (admin)
+# ================================================================ User management (admin)
 
 def _phone_without_symbols():
     """Phone number with spaces, brackets and dashes removed, so '0812345678' finds '(08) 1234 5678'."""
@@ -176,7 +221,7 @@ def user_edit(request, staff_id):
                          done_url=detail_url, cancel_url=detail_url)
 
 
-# ---------------------------------------------------------------- Guard's own profile
+# ================================================================ Guard's own profile
 
 @guard_required
 def my_profile(request):
@@ -207,11 +252,7 @@ def _edit_profile(request, person, *, title, done_url, cancel_url):
     })
 
 
-# ---------------------------------------------------------------- Placeholders (later phases)
-
-def _coming_soon(request, title, phase):
-    return render(request, "roster/coming_soon.html", {"title": title, "phase": phase})
-
+# ================================================================ Shifts (admin)
 
 @admin_required
 def shift_create(request):
@@ -261,4 +302,90 @@ def shift_create(request):
 
 @admin_required
 def shift_responses(request):
-    return _coming_soon(request, "Shift Responses", 5)
+    show = request.GET.get("show", "waiting")
+    shifts = (
+        Shift.objects
+        .filter(end_at__gte=timezone.now())
+        .exclude(status=Shift.Status.CANCELLED)
+        .select_related("assigned_guard__user")
+        .annotate(offered_count=Count("responses"))
+        .order_by("start_at")
+    )
+    if show == "waiting":
+        shifts = shifts.filter(status=Shift.Status.OPEN)
+    elif show == "assigned":
+        shifts = shifts.filter(status=Shift.Status.ASSIGNED)
+    else:
+        show = "all"
+
+    shifts = list(shifts)
+    # Who accepted each shift, and when
+    acceptances = {
+        r.shift_id: r
+        for r in ShiftResponse.objects.filter(
+            shift__in=shifts, accepted_at__isnull=False
+        ).select_related("guard__user")
+    }
+    rows = [(shift, acceptances.get(shift.pk)) for shift in shifts]
+    return render(request, "roster/shift_responses.html", {"rows": rows, "show": show})
+
+
+@admin_required
+def shift_detail(request, shift_id):
+    shift = get_object_or_404(
+        Shift.objects.select_related("assigned_guard__user", "created_by"), pk=shift_id
+    )
+
+    if request.method == "POST":
+        guard_id = request.POST.get("guard", "")
+        if not guard_id.isdigit():
+            messages.error(request, "Choose a guard first.")
+            return redirect("shift_detail", shift_id=shift.pk)
+
+        guard = get_object_or_404(StaffProfile, pk=guard_id, role=StaffProfile.Role.GUARD)
+        override = request.POST.get("override_rest") == "yes"
+        try:
+            assign_shift(shift, guard, actor=request.user.username, override_rest=override)
+        except RestRuleWarning as warning:
+            messages.warning(
+                request,
+                f"{warning} If you're sure, tick 'Override the 6-hour rest rule' and click Assign again.",
+            )
+            return redirect(f"{reverse('shift_detail', args=[shift.pk])}?guard={guard.pk}")
+        except ShiftUnavailable as error:
+            messages.error(request, str(error))
+            return redirect("shift_detail", shift_id=shift.pk)
+
+        messages.success(
+            request,
+            f"Shift assigned to {guard.staff_id} ({guard.full_name}). "
+            f"They have been notified by email and on their dashboard.",
+        )
+        return redirect("shift_detail", shift_id=shift.pk)
+
+    # Availability of every guard for this shift
+    guard_rows = []
+    guards = StaffProfile.objects.filter(
+        role=StaffProfile.Role.GUARD, user__is_active=True
+    ).select_related("user")
+    for guard in guards:
+        is_current = guard.pk == shift.assigned_guard_id
+        reason = None if is_current else check_guard_availability(guard, shift)
+        guard_rows.append({
+            "guard": guard,
+            "reason": reason,
+            "blocked": reason == REASON_OVERLAP,
+            "current": is_current,
+        })
+
+    responses = shift.responses.select_related("guard__user").order_by(
+        F("accepted_at").asc(nulls_last=True), "guard__staff_id"
+    )
+    return render(request, "roster/shift_detail.html", {
+        "shift": shift,
+        "summary": shift_summary(shift),
+        "guard_rows": guard_rows,
+        "responses": responses,
+        "selected": request.GET.get("guard", ""),
+        "can_assign": shift.status != Shift.Status.CANCELLED and not shift.is_past,
+    })

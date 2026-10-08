@@ -6,53 +6,53 @@
 
 <div class="row g-4">
   <div class="col-xl-8">
+
+    <!-- Available shifts (offers) -->
+    <div class="card mb-4">
+      <div class="card-header fw-semibold">Available shifts</div>
+      {% if offers %}
+        <ul class="list-group list-group-flush">
+          {% for offer, reason in offers %}
+            <li class="list-group-item">
+              <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                  <div class="fw-semibold">{{ offer.shift.hospital_name }} - {{ offer.shift.ward }}</div>
+                  <div>{{ offer.shift.start_at|date:"D d M Y" }}, {{ offer.shift.start_at|date:"H:i" }} - {{ offer.shift.end_at|date:"H:i" }}</div>
+                  <div class="help">Uniform: {{ offer.shift.uniform|default:"Not specified" }}</div>
+                  {% if offer.shift.rules %}
+                    <div class="help">Rules / notes: {{ offer.shift.rules|linebreaksbr }}</div>
+                  {% endif %}
+                </div>
+                <div>
+                  {% if reason %}
+                    <div class="help">Can't accept: {{ reason }}</div>
+                  {% else %}
+                    <form method="post" action="{% url 'shift_accept' offer.pk %}" class="m-0"
+                          onsubmit="return confirm('Accept this shift?');">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn-brand">Accept</button>
+                    </form>
+                  {% endif %}
+                </div>
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="card-body">No shifts available right now.</div>
+      {% endif %}
+    </div>
+
     <!-- Upcoming shifts -->
     <div class="card mb-4">
-      <div class="card-header fw-semibold">Upcoming shifts</div>
-      {% if upcoming_shifts %}
-        <div class="table-responsive">
-          <table class="table mb-0 align-middle">
-            <thead><tr><th>Hospital</th><th>Ward</th><th>Date</th><th>Time</th><th>Uniform</th></tr></thead>
-            <tbody>
-              {% for shift in upcoming_shifts %}
-                <tr>
-                  <td>{{ shift.hospital_name }}</td>
-                  <td>{{ shift.ward }}</td>
-                  <td>{{ shift.start_at|date:"D d M Y" }}</td>
-                  <td>{{ shift.start_at|date:"H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
-                  <td>{{ shift.uniform|default:"-" }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <div class="card-body">You have no upcoming shifts.</div>
-      {% endif %}
+      <div class="card-header fw-semibold">My upcoming shifts</div>
+      {% include "roster/_shift_table.html" with shifts=upcoming_shifts empty_text="You have no upcoming shifts." %}
     </div>
 
     <!-- Previous shifts -->
     <div class="card">
-      <div class="card-header fw-semibold">Previous shifts</div>
-      {% if previous_shifts %}
-        <div class="table-responsive">
-          <table class="table mb-0 align-middle">
-            <thead><tr><th>Hospital</th><th>Ward</th><th>Date</th><th>Time</th></tr></thead>
-            <tbody>
-              {% for shift in previous_shifts %}
-                <tr>
-                  <td>{{ shift.hospital_name }}</td>
-                  <td>{{ shift.ward }}</td>
-                  <td>{{ shift.start_at|date:"D d M Y" }}</td>
-                  <td>{{ shift.start_at|date:"H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <div class="card-body">No previous shifts yet.</div>
-      {% endif %}
+      <div class="card-header fw-semibold">My previous shifts</div>
+      {% include "roster/_shift_table.html" with shifts=previous_shifts empty_text="No previous shifts yet." %}
     </div>
   </div>
 
@@ -70,7 +70,7 @@
       </div>
       <ul class="list-group list-group-flush">
         {% for n in notifications %}
-          <li class="list-group-item {% if not n.is_read %}notif-unread{% endif %}">
+          <li class="list-group-item {% if n.kind == 'CANCELLATION' %}notif-cancel{% elif not n.is_read %}notif-unread{% endif %}">
             <div class="fw-semibold">{{ n.get_kind_display }}</div>
             <div>{{ n.message }}</div>
             <div class="help">{{ n.created_at|date:"d M Y, H:i" }}</div>

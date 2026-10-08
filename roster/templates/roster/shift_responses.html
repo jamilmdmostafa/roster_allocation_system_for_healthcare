@@ -1,0 +1,62 @@
+{% extends "roster/base.html" %}
+{% block title %}Shift Responses | Roster Management{% endblock %}
+
+{% block content %}
+<style>
+  .nav-pills .nav-link { color: #000; }
+  .nav-pills .nav-link.active { background-color: #3048AC; color: #fff; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h1 class="h3 mb-0">Shift Responses</h1>
+  <a href="{% url 'shift_create' %}" class="btn btn-brand">+ Create Shift</a>
+</div>
+
+<ul class="nav nav-pills mb-3">
+  <li class="nav-item"><a class="nav-link {% if show == 'waiting' %}active{% endif %}" href="?show=waiting">Waiting for a guard</a></li>
+  <li class="nav-item"><a class="nav-link {% if show == 'assigned' %}active{% endif %}" href="?show=assigned">Assigned</a></li>
+  <li class="nav-item"><a class="nav-link {% if show == 'all' %}active{% endif %}" href="?show=all">All upcoming</a></li>
+</ul>
+
+<div class="card">
+  {% if rows %}
+    <div class="table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr><th>Hospital</th><th>Ward</th><th>When</th><th>Offered to</th><th>Response</th><th>Guard</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for shift, accepted in rows %}
+            <tr>
+              <td>{{ shift.hospital_name }}</td>
+              <td>{{ shift.ward }}</td>
+              <td>{{ shift.start_at|date:"D d M Y, H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
+              <td>{{ shift.offered_count }} guard{{ shift.offered_count|pluralize }}</td>
+              <td>
+                {% if shift.assigned_guard %}
+                  {% if accepted and accepted.guard_id == shift.assigned_guard_id %}
+                    <span class="badge bg-success">Accepted first</span>
+                    <div class="help">{{ accepted.accepted_at|date:"d M, H:i:s" }}</div>
+                  {% else %}
+                    <span class="badge bg-dark">Assigned by admin</span>
+                  {% endif %}
+                {% else %}
+                  <span class="badge bg-warning text-dark">Waiting</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if shift.assigned_guard %}
+                  {{ shift.assigned_guard.full_name }} <span class="help">({{ shift.assigned_guard.staff_id }})</span>
+                {% else %}-{% endif %}
+              </td>
+              <td><a href="{% url 'shift_detail' shift.pk %}" class="btn btn-sm btn-outline-secondary">Manage</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card-body">No shifts to show here.</div>
+  {% endif %}
+</div>
+{% endblock %}

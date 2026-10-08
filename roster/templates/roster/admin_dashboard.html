@@ -74,6 +74,7 @@
           <li class="list-group-item {% if n.kind == 'CANCELLATION' %}notif-cancel{% elif not n.is_read %}notif-unread{% endif %}">
             <div class="fw-semibold">{{ n.get_kind_display }}</div>
             <div>{{ n.message }}</div>
+            <a href="{% url 'shift_detail' n.shift_id %}" class="small">View shift</a>
             <div class="help">{{ n.created_at|date:"d M Y, H:i" }}</div>
           </li>
         {% empty %}

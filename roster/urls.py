@@ -26,10 +26,12 @@ urlpatterns = [
     path("users/<str:staff_id>/edit/", views.user_edit, name="user_edit"),
     path("shifts/create/", views.shift_create, name="shift_create"),
     path("shifts/responses/", views.shift_responses, name="shift_responses"),
+    path("shifts/<int:shift_id>/", views.shift_detail, name="shift_detail"),
 
     # Guard pages
     path("my/dashboard/", views.guard_dashboard, name="guard_dashboard"),
     path("my/profile/", views.my_profile, name="my_profile"),
+    path("my/offers/<int:response_id>/accept/", views.shift_accept, name="shift_accept"),
 
     # Shared
     path("notifications/read/", views.mark_notifications_read, name="mark_notifications_read"),
