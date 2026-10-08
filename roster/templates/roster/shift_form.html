@@ -1,0 +1,64 @@
+{% extends "roster/base.html" %}
+{% block title %}Create Shift | Roster Management{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Create Shift</h1>
+
+<div class="card mb-4" style="max-width: 900px;">
+  <div class="card-body">
+    <p class="help mb-0">
+      When you save, the shift is offered to every guard who is free and has had at least
+      6 hours' rest. Each of them gets an email and a dashboard notification.
+    </p>
+
+    <form method="post" class="styled-form">
+      {% csrf_token %}
+      {% for error in form.non_field_errors %}<div class="alert alert-danger mt-3">{{ error }}</div>{% endfor %}
+
+      <div class="row">
+        {% for field in form %}
+          <div class="{% if field.name == 'uniform' or field.name == 'rules' %}col-12{% elif field.name == 'shift_date' or field.name == 'start_time' or field.name == 'end_time' %}col-md-4{% else %}col-md-6{% endif %}">
+            <label for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+            {{ field }}
+            {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+            {% for error in field.errors %}<div class="text-danger">{{ error }}</div>{% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+
+      <button type="submit" class="btn btn-brand mt-4">Create shift &amp; notify guards</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header fw-semibold">Upcoming shifts</div>
+  {% if upcoming %}
+    <div class="table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead>
+          <tr><th>Hospital</th><th>Ward</th><th>When</th><th>Status</th><th>Guard</th><th>Offered to</th></tr>
+        </thead>
+        <tbody>
+          {% for shift in upcoming %}
+            <tr>
+              <td>{{ shift.hospital_name }}</td>
+              <td>{{ shift.ward }}</td>
+              <td>{{ shift.start_at|date:"D d M Y, H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
+              <td>{{ shift.get_status_display }}</td>
+              <td>
+                {% if shift.assigned_guard %}
+                  {{ shift.assigned_guard.full_name }} <span class="help">({{ shift.assigned_guard.staff_id }})</span>
+                {% else %}-{% endif %}
+              </td>
+              <td>{{ shift.offered_count }} guard{{ shift.offered_count|pluralize }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card-body">No upcoming shifts yet.</div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -101,7 +101,12 @@ class Shift(models.Model):
         return (f"{self.hospital_name} / {self.ward} - {self.shift_date} "
                 f"{self.start_time:%H:%M}-{self.end_time:%H:%M}")
 
-    def save(self, *args, **kwargs):
+    def calculate_times(self):
+
+        """
+        Work out start_at / end_at from the date and times (handles overnight shifts).
+        """
+
         tz = timezone.get_current_timezone()
         start = datetime.combine(self.shift_date, self.start_time)
         end = datetime.combine(self.shift_date, self.end_time)
@@ -110,6 +115,9 @@ class Shift(models.Model):
             end += timedelta(days=1)
         self.start_at = timezone.make_aware(start, tz)
         self.end_at = timezone.make_aware(end, tz)
+
+    def save(self, *args, **kwargs):
+        self.calculate_times()
         super().save(*args, **kwargs)
 
     @property

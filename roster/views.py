@@ -12,9 +12,9 @@ from django.utils.crypto import get_random_string
 from django.views.decorators.http import require_POST
 
 from .decorators import admin_required, guard_required
-from .forms import StaffForm, profile_initial
+from .forms import ShiftForm, StaffForm, profile_initial
 from .models import AuditLog, Shift, StaffProfile
-from .services import create_staff_member, send_welcome_email, update_staff_member
+from .services import create_staff_member, release_shift, send_welcome_email, update_staff_member
 
 
 # ---------------------------------------------------------------- Home & dashboards
@@ -215,7 +215,48 @@ def _coming_soon(request, title, phase):
 
 @admin_required
 def shift_create(request):
-    return _coming_soon(request, "Create Shift", 4)
+    if request.method == "POST":
+        form = ShiftForm(request.POST)
+        if form.is_valid():
+            shift = form.save(commit=False)
+            shift.created_by = request.user
+            shift.save()
+
+            result = release_shift(
+                shift,
+                actor=request.user.username,
+                dashboard_url=request.build_absolute_uri(reverse("guard_dashboard")),
+            )
+
+            count = len(result["eligible"])
+            if count:
+                messages.success(
+                    request,
+                    f"Shift created and offered to {count} guard{'s' if count != 1 else ''} "
+                    f"by email and dashboard notification.",
+                )
+            else:
+                messages.warning(request, "Shift created, but no guards are free for it. It stays open.")
+
+            if result["skipped"]:
+                skipped_text = "; ".join(f"{g.staff_id} - {reason}" for g, reason in result["skipped"])
+                messages.info(request, f"Not offered to: {skipped_text}")
+
+            if result["email_failed"]:
+                messages.error(request, "Email could not be sent to: " + ", ".join(result["email_failed"]))
+
+            return redirect("shift_create")
+    else:
+        form = ShiftForm()
+
+    upcoming = (
+        Shift.objects
+        .filter(end_at__gte=timezone.now())
+        .exclude(status=Shift.Status.CANCELLED)
+        .select_related("assigned_guard__user")
+        .annotate(offered_count=Count("responses"))[:10]
+    )
+    return render(request, "roster/shift_form.html", {"form": form, "upcoming": upcoming})
 
 
 @admin_required
