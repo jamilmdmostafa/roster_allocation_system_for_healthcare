@@ -458,3 +458,111 @@ def cancel_shift(shift, guard, *, reason, dashboard_url):
     )
     send_cancellation_email_to_admins(guard, shift, reason, count, short_notice)
     return result
+
+# ================================================================ Admin cancellation & deactivation
+
+def send_admin_cancelled_email(guard, shift, reason):
+    start = timezone.localtime(shift.start_at)
+    lines = [
+        f"Hi {guard.user.first_name},", "",
+        "An admin has cancelled this shift. You do not need to attend:", "",
+    ]
+    lines += _shift_detail_lines(shift)
+    lines += ["", f"Reason: {reason}"]
+    return _send_email(
+        f"Shift cancelled by admin: {shift.hospital_name} - {shift.ward}, {start:%d %b}",
+        lines, guard.user.email,
+    )
+
+
+def admin_cancel_shift(shift, *, actor, reason):
+    """
+    An admin cancels a whole shift because it is no longer needed.
+    The assigned guard (if any) gets a dashboard notification and an email.
+    The guard stays recorded on the shift for the history, but a cancelled
+    shift never counts in the overlap or 6-hour rest checks.
+    Returns the guard who was assigned, or None.
+    """
+    with transaction.atomic():
+        shift = Shift.objects.select_for_update().get(pk=shift.pk)
+        if shift.status == Shift.Status.CANCELLED:
+            raise ShiftUnavailable("This shift is already cancelled.")
+        if shift.end_at <= timezone.now():
+            raise ShiftUnavailable("This shift has already finished.")
+
+        guard = shift.assigned_guard
+        shift.status = Shift.Status.CANCELLED
+        shift.cancelled_at = timezone.now()
+        shift.cancel_reason = reason
+        shift.save()
+
+        if guard:
+            Notification.objects.create(
+                recipient=guard, kind=Notification.Kind.CANCELLATION, shift=shift,
+                message=(f"Cancelled by admin: {shift.hospital_name} - {shift.ward}, "
+                         f"{shift_summary(shift)}. Reason: {reason}")[:255],
+            )
+        AuditLog.objects.create(
+            shift=shift, actor=actor, action="SHIFT_CANCELLED_BY_ADMIN",
+            details=f"Guard: {guard.staff_id if guard else 'none'}. Reason: {reason}",
+        )
+
+    if guard:
+        send_admin_cancelled_email(guard, shift, reason)
+    return guard
+
+
+def deactivate_guard(guard, *, actor, dashboard_url):
+    """
+    Deactivate a guard who has left, instead of deleting them.
+    - They can no longer log in and are never offered shifts.
+    - Their upcoming (not yet started) shifts are reopened and re-offered.
+    - Their history stays for the audit log.
+    Returns the list of shifts that were reopened.
+    """
+    if guard.role != StaffProfile.Role.GUARD:
+        raise ShiftUnavailable("Only guards can be deactivated here.")
+
+    now = timezone.now()
+    reopened = []
+    with transaction.atomic():
+        user = guard.user
+        if not user.is_active:
+            raise ShiftUnavailable(f"{guard.staff_id} is already inactive.")
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+
+        upcoming = Shift.objects.select_for_update().filter(
+            assigned_guard=guard, status=Shift.Status.ASSIGNED, start_at__gt=now
+        )
+        for shift in upcoming:
+            shift.assigned_guard = None
+            shift.status = Shift.Status.OPEN
+            shift.save()
+            reopened.append(shift)
+
+        AuditLog.objects.create(
+            actor=actor, action="GUARD_DEACTIVATED",
+            details=f"{guard.staff_id}. Reopened shift IDs: {', '.join(str(s.pk) for s in reopened) or 'none'}",
+        )
+
+    # Offer each reopened shift to the other guards straight away
+    for shift in reopened:
+        result = release_shift(shift, actor="system", dashboard_url=dashboard_url, reoffer=True)
+        _notify_admins(
+            Notification.Kind.CANCELLATION, shift,
+            f"{guard.staff_id} ({guard.full_name}) was deactivated. Reopened "
+            f"{shift.hospital_name} - {shift.ward}, {shift_summary(shift)} and re-offered "
+            f"to {len(result['eligible'])} guard(s).",
+        )
+    return reopened
+
+
+def reactivate_guard(guard, *, actor):
+    """Let a returning guard log in and receive new shift offers again."""
+    user = guard.user
+    if user.is_active:
+        raise ShiftUnavailable(f"{guard.staff_id} is already active.")
+    user.is_active = True
+    user.save(update_fields=["is_active"])
+    AuditLog.objects.create(actor=actor, action="GUARD_REACTIVATED", details=guard.staff_id)

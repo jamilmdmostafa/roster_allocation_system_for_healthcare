@@ -4,7 +4,12 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
   <h1 class="h3 mb-0">{{ shift.hospital_name }} - {{ shift.ward }}</h1>
-  <a href="{% url 'shift_responses' %}" class="btn btn-outline-secondary">Back to Shift Responses</a>
+    <div class="d-flex gap-2">
+    {% if can_assign %}
+      <a href="{% url 'shift_admin_cancel' shift.pk %}" class="btn btn-outline-danger">Cancel this shift</a>
+    {% endif %}
+    <a href="{% url 'shift_responses' %}" class="btn btn-outline-secondary">Back to Shift Responses</a>
+  </div>
 </div>
 
 <div class="row g-4">
@@ -19,7 +24,12 @@
           <tr><th>When</th><td>{{ summary }}</td></tr>
           <tr><th>Uniform</th><td>{{ shift.uniform|default:"-" }}</td></tr>
           <tr><th>Rules / notes</th><td>{{ shift.rules|default:"-"|linebreaksbr }}</td></tr>
-          <tr><th>Status</th><td>{{ shift.get_status_display }}</td></tr>
+          <tr><th>Status</th><td>
+            {{ shift.get_status_display }}
+            {% if shift.status == "CANCELLED" %}
+              <div class="help">Cancelled {{ shift.cancelled_at|date:"d M Y, H:i" }}. Reason: {{ shift.cancel_reason|default:"-" }}</div>
+            {% endif %}
+          </td></tr>
           <tr><th>Assigned guard</th><td>
             {% if shift.assigned_guard %}
               {{ shift.assigned_guard.full_name }} ({{ shift.assigned_guard.staff_id }})<br>

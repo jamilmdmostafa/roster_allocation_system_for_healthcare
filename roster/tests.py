@@ -14,12 +14,13 @@ from .services import (
     REASON_REST,
     ShiftUnavailable,
     accept_shift,
+    admin_cancel_shift,
     cancel_shift,
     check_guard_availability,
     create_staff_member,
+    deactivate_guard,
     release_shift,
 )
-
 PASSWORD = "Test@12345"
 DASHBOARD_URL = "http://testserver/my/dashboard/"
 _numbers = itertools.count(1)
@@ -206,3 +207,55 @@ class SimultaneousAcceptTest(TransactionTestCase):
 
         self.assertEqual(sorted(results), ["lost", "won"])
         self.assertEqual(ShiftResponse.objects.filter(shift=shift, accepted_at__isnull=False).count(), 1)
+class AdminCancelTests(TestCase):
+    def test_admin_cancel_notifies_and_emails_the_guard(self):
+        guard = make_person()
+        shift = make_shift(in_two_days(8), status=Shift.Status.ASSIGNED, assigned_guard=guard)
+
+        returned = admin_cancel_shift(shift, actor="admin01", reason="Ward closed")
+
+        shift.refresh_from_db()
+        self.assertEqual(shift.status, Shift.Status.CANCELLED)
+        self.assertEqual(shift.cancel_reason, "Ward closed")
+        self.assertEqual(returned, guard)
+        self.assertTrue(guard.notifications.filter(kind=Notification.Kind.CANCELLATION).exists())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [guard.user.email])
+        # A cancelled shift no longer blocks the guard from other shifts
+        self.assertIsNone(check_guard_availability(guard, make_shift(in_two_days(10))))
+
+
+class DeactivateTests(TestCase):
+    def test_deactivated_guard_cannot_log_in_and_shifts_are_reoffered(self):
+        admin = make_person(StaffProfile.Role.ADMIN)
+        leaving, other = make_person(), make_person()
+        shift = make_shift(in_two_days(8), status=Shift.Status.ASSIGNED, assigned_guard=leaving)
+
+        reopened = deactivate_guard(leaving, actor="admin01", dashboard_url=DASHBOARD_URL)
+
+        shift.refresh_from_db()
+        self.assertEqual(reopened, [shift])
+        self.assertEqual(shift.status, Shift.Status.OPEN)
+        self.assertIsNone(shift.assigned_guard)
+        self.assertTrue(ShiftResponse.objects.filter(shift=shift, guard=other).exists())
+        self.assertFalse(ShiftResponse.objects.filter(shift=shift, guard=leaving).exists())
+        self.assertTrue(admin.notifications.filter(kind=Notification.Kind.CANCELLATION).exists())
+        self.assertFalse(self.client.login(username=leaving.staff_id, password=PASSWORD))
+
+
+class GuardNotificationFilterTests(TestCase):
+    def test_notifications_for_finished_shifts_are_hidden(self):
+        guard = make_person()
+        two_days_ago = timezone.localdate() - timedelta(days=2)
+        past_shift = make_shift(timezone.make_aware(datetime.combine(two_days_ago, time(8, 0))))
+        future_shift = make_shift(in_two_days(8))
+        Notification.objects.create(recipient=guard, kind=Notification.Kind.NEW_SHIFT,
+                                    shift=past_shift, message="old shift")
+        Notification.objects.create(recipient=guard, kind=Notification.Kind.NEW_SHIFT,
+                                    shift=future_shift, message="new shift")
+
+        self.client.login(username=guard.staff_id, password=PASSWORD)
+        response = self.client.get(reverse("guard_dashboard"))
+
+        shown = [n.message for n in response.context["notifications"]]
+        self.assertEqual(shown, ["new shift"])

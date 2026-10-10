@@ -2,13 +2,39 @@
 {% block title %}{{ person.full_name }} | Roster Management{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-  <h1 class="h3 mb-0">{{ person.full_name }} <span class="help">({{ person.staff_id }})</span></h1>
-  <div>
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <h1 class="h3 mb-0">
+    {{ person.full_name }} <span class="help">({{ person.staff_id }})</span>
+    {% if not person.user.is_active %}<span class="badge bg-secondary">Inactive</span>{% endif %}
+  </h1>
+  <div class="d-flex gap-2 flex-wrap">
     <a href="{% url 'user_edit' person.staff_id %}" class="btn btn-brand">Edit</a>
+
+    {% if not person.is_admin %}
+      {% if person.user.is_active %}
+        <form method="post" action="{% url 'user_deactivate' person.staff_id %}" class="m-0"
+              onsubmit="return confirm('Deactivate {{ person.staff_id }}? They will no longer be able to log in, and their {{ upcoming|length }} upcoming shift(s) will be reopened and offered to other guards.');">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-danger">Deactivate</button>
+        </form>
+      {% else %}
+        <form method="post" action="{% url 'user_reactivate' person.staff_id %}" class="m-0">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-outline-success">Reactivate</button>
+        </form>
+      {% endif %}
+    {% endif %}
+
     <a href="{% url 'user_list' %}" class="btn btn-outline-secondary">Back to users</a>
   </div>
 </div>
+
+{% if not person.user.is_active %}
+  <div class="alert alert-secondary">
+    This guard is <strong>inactive</strong>. They can't log in and won't be offered shifts.
+    Their history is kept below.
+  </div>
+{% endif %}
 
 <div class="row g-4 mb-4">
   <div class="col-lg-6">
@@ -18,6 +44,7 @@
         <table class="table table-sm mb-0">
           <tr><th>Role</th><td>{{ person.get_role_display }}</td></tr>
           <tr><th>Staff ID</th><td>{{ person.staff_id }}</td></tr>
+          <tr><th>Status</th><td>{% if person.user.is_active %}Active{% else %}Inactive{% endif %}</td></tr>
           <tr><th>Email</th><td>{{ person.user.email }}</td></tr>
           <tr><th>Phone</th><td>{{ person.phone_number }}</td></tr>
           <tr><th>Address</th><td>{{ person.address|default:"-" }}</td></tr>

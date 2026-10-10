@@ -24,10 +24,13 @@ urlpatterns = [
     path("users/add/", views.user_add, name="user_add"),  # must stay ABOVE the <staff_id> lines
     path("users/<str:staff_id>/", views.user_detail, name="user_detail"),
     path("users/<str:staff_id>/edit/", views.user_edit, name="user_edit"),
+    path("users/<str:staff_id>/deactivate/", views.user_deactivate, name="user_deactivate"),
+    path("users/<str:staff_id>/reactivate/", views.user_reactivate, name="user_reactivate"),
     path("shifts/create/", views.shift_create, name="shift_create"),
     path("shifts/responses/", views.shift_responses, name="shift_responses"),
     path("shifts/<int:shift_id>/", views.shift_detail, name="shift_detail"),
-
+    path("shifts/<int:shift_id>/cancel/", views.shift_admin_cancel, name="shift_admin_cancel"),
+    
     # Guard pages
     path("my/dashboard/", views.guard_dashboard, name="guard_dashboard"),
     path("my/profile/", views.my_profile, name="my_profile"),

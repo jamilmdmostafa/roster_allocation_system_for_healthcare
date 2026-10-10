@@ -19,6 +19,9 @@ from .services import (
     RestRuleWarning,
     ShiftUnavailable,
     accept_shift,
+    admin_cancel_shift,
+    deactivate_guard,
+    reactivate_guard,
     assign_shift,
     cancel_shift,
     SHORT_NOTICE_HOURS,
@@ -65,7 +68,9 @@ def admin_dashboard(request):
         "open_shifts_count": Shift.objects.filter(
             status=Shift.Status.OPEN, end_at__gte=now
         ).count(),
-        "guard_count": StaffProfile.objects.filter(role=StaffProfile.Role.GUARD).count(),
+        "guard_count": StaffProfile.objects.filter(
+            role=StaffProfile.Role.GUARD, user__is_active=True
+        ).count(),
         "notifications": profile.notifications.select_related("shift")[:10],
         "unread_count": profile.notifications.filter(is_read=False).count(),
     }
@@ -75,11 +80,12 @@ def admin_dashboard(request):
 @guard_required
 def guard_dashboard(request):
     profile = request.user.profile
+    now = timezone.now()
 
     # Shifts offered to this guard that nobody has taken yet and haven't started
     open_offers = (
         profile.shift_responses
-        .filter(shift__status=Shift.Status.OPEN, shift__start_at__gt=timezone.now(),
+        .filter(shift__status=Shift.Status.OPEN, shift__start_at__gt=now,
                 cancelled_at__isnull=True)
         .select_related("shift")
         .order_by("shift__start_at")
@@ -87,12 +93,16 @@ def guard_dashboard(request):
     # Pair each offer with None (can accept) or the reason they can't
     offers = [(offer, check_guard_availability(profile, offer.shift)) for offer in open_offers]
 
+    # Only notifications about shifts that haven't finished yet.
+    # Finished shifts already appear under "My previous shifts".
+    current_notifications = profile.notifications.filter(shift__end_at__gte=now)
+
     context = {
         "offers": offers,
         "upcoming_shifts": profile.upcoming_shifts(),
         "previous_shifts": profile.completed_shifts(),
-        "notifications": profile.notifications.select_related("shift")[:10],
-        "unread_count": profile.notifications.filter(is_read=False).count(),
+        "notifications": current_notifications.select_related("shift")[:10],
+        "unread_count": current_notifications.filter(is_read=False).count(),
     }
     return render(request, "roster/guard_dashboard.html", context)
 
@@ -176,6 +186,7 @@ def _phone_without_symbols():
 def user_list(request):
     query = request.GET.get("q", "").strip()
     role = request.GET.get("role", "")
+    status = request.GET.get("status", "active")
     now = timezone.now()
     assigned = Q(assigned_shifts__status=Shift.Status.ASSIGNED)
 
@@ -198,11 +209,19 @@ def user_list(request):
     if role in StaffProfile.Role.values:
         people = people.filter(role=role)
 
+    # Inactive (deactivated) users are hidden unless asked for
+    if status == "inactive":
+        people = people.filter(user__is_active=False)
+    elif status != "all":
+        status = "active"
+        people = people.filter(user__is_active=True)
+
     context = {
         "people": people,
         "query": query,
         "role": role,
         "roles": StaffProfile.Role.choices,
+        "status": status,
     }
     return render(request, "roster/user_list.html", context)
 
@@ -351,7 +370,6 @@ def shift_responses(request):
     shifts = (
         Shift.objects
         .filter(end_at__gte=timezone.now())
-        .exclude(status=Shift.Status.CANCELLED)
         .select_related("assigned_guard__user")
         .annotate(offered_count=Count("responses"))
         .order_by("start_at")
@@ -360,19 +378,96 @@ def shift_responses(request):
         shifts = shifts.filter(status=Shift.Status.OPEN)
     elif show == "assigned":
         shifts = shifts.filter(status=Shift.Status.ASSIGNED)
+    elif show == "cancelled":
+        shifts = shifts.filter(status=Shift.Status.CANCELLED)
     else:
         show = "all"
+        shifts = shifts.exclude(status=Shift.Status.CANCELLED)
 
     shifts = list(shifts)
     # Who accepted each shift, and when
     acceptances = {
         r.shift_id: r
         for r in ShiftResponse.objects.filter(
-                shift__in=shifts, accepted_at__isnull=False, cancelled_at__isnull=True
+            shift__in=shifts, accepted_at__isnull=False, cancelled_at__isnull=True
         ).select_related("guard__user")
     }
     rows = [(shift, acceptances.get(shift.pk)) for shift in shifts]
     return render(request, "roster/shift_responses.html", {"rows": rows, "show": show})
+
+
+@admin_required
+def shift_admin_cancel(request, shift_id):
+    shift = get_object_or_404(Shift.objects.select_related("assigned_guard__user"), pk=shift_id)
+    if shift.status == Shift.Status.CANCELLED or shift.is_past:
+        messages.error(request, "This shift can't be cancelled.")
+        return redirect("shift_detail", shift_id=shift.pk)
+
+    if request.method == "POST":
+        reason = request.POST.get("reason", "").strip()
+        if not reason:
+            messages.error(request, "Please give a reason for cancelling.")
+        else:
+            try:
+                guard = admin_cancel_shift(shift, actor=request.user.username, reason=reason[:500])
+            except ShiftUnavailable as error:
+                messages.error(request, str(error))
+            else:
+                if guard:
+                    messages.success(
+                        request,
+                        f"Shift cancelled. {guard.staff_id} ({guard.full_name}) has been "
+                        f"notified by email and on their dashboard.",
+                    )
+                else:
+                    messages.success(request, "Shift cancelled.")
+            return redirect("shift_detail", shift_id=shift.pk)
+
+    return render(request, "roster/admin_shift_cancel.html", {
+        "shift": shift,
+        "summary": shift_summary(shift),
+    })
+
+
+@admin_required
+@require_POST
+def user_deactivate(request, staff_id):
+    person = get_object_or_404(
+        StaffProfile.objects.select_related("user"), staff_id=staff_id, role=StaffProfile.Role.GUARD
+    )
+    try:
+        reopened = deactivate_guard(
+            person, actor=request.user.username,
+            dashboard_url=request.build_absolute_uri(reverse("guard_dashboard")),
+        )
+    except ShiftUnavailable as error:
+        messages.error(request, str(error))
+    else:
+        text = f"{person.staff_id} ({person.full_name}) has been deactivated and can no longer log in."
+        if reopened:
+            count = len(reopened)
+            text += f" {count} upcoming shift{'s' if count != 1 else ''} reopened and re-offered to other guards."
+        messages.success(request, text)
+    return redirect("user_detail", staff_id=person.staff_id)
+
+
+@admin_required
+@require_POST
+def user_reactivate(request, staff_id):
+    person = get_object_or_404(
+        StaffProfile.objects.select_related("user"), staff_id=staff_id, role=StaffProfile.Role.GUARD
+    )
+    try:
+        reactivate_guard(person, actor=request.user.username)
+    except ShiftUnavailable as error:
+        messages.error(request, str(error))
+    else:
+        messages.success(
+            request,
+            f"{person.staff_id} ({person.full_name}) has been reactivated and can log in again. "
+            f"They will be offered new shifts from now on.",
+        )
+    return redirect("user_detail", staff_id=person.staff_id)
 
 
 @admin_required

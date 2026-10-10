@@ -94,6 +94,10 @@ class Shift(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Filled in if an admin cancels the whole shift
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=500, blank=True)
+
     class Meta:
         ordering = ["start_at"]
 

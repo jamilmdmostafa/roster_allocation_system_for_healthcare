@@ -16,6 +16,7 @@
   <li class="nav-item"><a class="nav-link {% if show == 'waiting' %}active{% endif %}" href="?show=waiting">Waiting for a guard</a></li>
   <li class="nav-item"><a class="nav-link {% if show == 'assigned' %}active{% endif %}" href="?show=assigned">Assigned</a></li>
   <li class="nav-item"><a class="nav-link {% if show == 'all' %}active{% endif %}" href="?show=all">All upcoming</a></li>
+  <li class="nav-item"><a class="nav-link {% if show == 'cancelled' %}active{% endif %}" href="?show=cancelled">Cancelled</a></li>
 </ul>
 
 <div class="card">
@@ -33,7 +34,9 @@
               <td>{{ shift.start_at|date:"D d M Y, H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
               <td>{{ shift.offered_count }} guard{{ shift.offered_count|pluralize }}</td>
               <td>
-                {% if shift.assigned_guard %}
+                {% if shift.status == "CANCELLED" %}
+                  <span class="badge bg-danger">Cancelled</span>
+                {% elif shift.assigned_guard %}
                   {% if accepted and accepted.guard_id == shift.assigned_guard_id %}
                     <span class="badge bg-success">Accepted first</span>
                     <div class="help">{{ accepted.accepted_at|date:"d M, H:i:s" }}</div>

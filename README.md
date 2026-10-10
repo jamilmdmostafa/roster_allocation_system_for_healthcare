@@ -15,10 +15,14 @@ Industry Dissertation 2 project, UniSC - MD Mostafa Jamil (1211525).
 - User profile with shifts completed and upcoming shifts
 - Create shifts with hospital, ward, date, 24-hour times, uniform and rules
 - Shift Responses: who accepted first and exactly when; assign or reassign any shift
+- Cancel any upcoming shift with a reason (the assigned guard is emailed and notified)
+- Deactivate guards who leave instead of deleting them: they can't log in, their upcoming
+  shifts are re-offered automatically, and their history is kept; reactivate at any time
 
 **Guard**
 - Log in with staff ID or email
-- Dashboard: available shifts with an Accept button, upcoming and previous shifts, notifications
+- Dashboard: available shifts with an Accept button, upcoming and previous shifts, and
+  notifications for current and upcoming shifts only
 - Cancel a shift with a reason (admin alerted, flagged if short notice)
 - Edit own profile (not the staff ID) and change password
 
@@ -77,9 +81,8 @@ Python, Django 6.1, PostgreSQL, Bootstrap 5, Git/GitHub.
 
 ## Running the tests
 
-```
 python manage.py test roster
-```
+
 
 ## Future work
 

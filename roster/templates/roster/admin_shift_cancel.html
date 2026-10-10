@@ -1,0 +1,43 @@
+{% extends "roster/base.html" %}
+{% block title %}Cancel Shift | Roster Management{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-4">Cancel shift</h1>
+
+<div class="card" style="max-width: 640px;">
+  <div class="card-body">
+    <table class="table table-sm">
+      <tr><th>Hospital</th><td>{{ shift.hospital_name }}</td></tr>
+      <tr><th>Ward</th><td>{{ shift.ward }}</td></tr>
+      <tr><th>When</th><td>{{ summary }}</td></tr>
+      <tr><th>Assigned guard</th><td>
+        {% if shift.assigned_guard %}
+          {{ shift.assigned_guard.full_name }} ({{ shift.assigned_guard.staff_id }})
+        {% else %}
+          Nobody yet
+        {% endif %}
+      </td></tr>
+    </table>
+
+    <div class="alert alert-warning">
+      The shift will be cancelled completely and nobody will be able to accept it.
+      {% if shift.assigned_guard %}
+        {{ shift.assigned_guard.full_name }} will get a cancellation email and a dashboard notification.
+      {% endif %}
+      If you only want to change the guard, use <strong>Reassign</strong> on the shift page instead.
+    </div>
+
+    <form method="post" class="styled-form">
+      {% csrf_token %}
+      <label for="reason">Reason for cancelling *</label>
+      <textarea id="reason" name="reason" rows="3" maxlength="500" required
+                placeholder="e.g. Ward closed, patient discharged"></textarea>
+
+      <div class="mt-4 d-flex gap-2">
+        <button type="submit" class="btn btn-danger">Yes, cancel this shift</button>
+        <a href="{% url 'shift_detail' shift.pk %}" class="btn btn-outline-secondary">No, keep it</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -10,18 +10,26 @@
 <!-- Search -->
 <form method="get" class="card card-body mb-4">
   <div class="row g-2 align-items-end">
-    <div class="col-md-6">
+    <div class="col-md-5">
       <label for="q" class="form-label fw-semibold">Search</label>
       <input type="text" id="q" name="q" value="{{ query }}" class="form-control"
              placeholder="Name, email, phone number or staff ID">
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label for="role" class="form-label fw-semibold">Role</label>
       <select id="role" name="role" class="form-select">
         <option value="">All roles</option>
         {% for value, label in roles %}
           <option value="{{ value }}" {% if value == role %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label for="status" class="form-label fw-semibold">Status</label>
+      <select id="status" name="status" class="form-select">
+        <option value="active" {% if status == "active" %}selected{% endif %}>Active</option>
+        <option value="inactive" {% if status == "inactive" %}selected{% endif %}>Inactive</option>
+        <option value="all" {% if status == "all" %}selected{% endif %}>All</option>
       </select>
     </div>
     <div class="col-md-3 d-flex gap-2">
@@ -52,7 +60,10 @@
               {% endif %}
             </td>
             <td>{{ person.staff_id }}</td>
-            <td>{{ person.full_name }}</td>
+            <td>
+              {{ person.full_name }}
+              {% if not person.user.is_active %}<span class="badge bg-secondary ms-1">Inactive</span>{% endif %}
+            </td>
             <td>{{ person.user.email }}</td>
             <td>{{ person.phone_number }}</td>
             <td>{{ person.license_number|default:"-" }}</td>
