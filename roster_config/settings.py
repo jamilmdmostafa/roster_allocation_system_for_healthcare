@@ -29,12 +29,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure--um8o%kpf_&f#75hhq9e!5%tatyse6t!q_)1h^(k=8h)qwogw8'
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "False") == "True"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h.strip()]
 
 
 # Application definition
@@ -134,15 +134,33 @@ STATIC_URL = 'static/'
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# Email: EMAIL_MODE=console prints emails in the terminal (development),
+# EMAIL_MODE=smtp sends real emails using the account details in .env
+if os.getenv("EMAIL_MODE", "console") == "smtp":
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+            "OPTIONS": {
+                "host": os.getenv("EMAIL_HOST", "smtp.gmail.com"),
+                "port": int(os.getenv("EMAIL_PORT", "587")),
+                "use_tls": True,
+                "username": os.getenv("EMAIL_USERNAME"),
+                "password": os.getenv("EMAIL_PASSWORD"),
+                "timeout": 10,  # give up after 10 seconds instead of hanging
+            },
+        },
+    }
+else:
+    MAILERS = {
+        "default": {
+            "BACKEND": "django.core.mail.backends.console.EmailBackend",
+        },
+    }
 
-# Development: emails are printed in the terminal instead of being sent.
-# We switch to real email in Phase 7.
-DEFAULT_FROM_EMAIL = "Roster Management <noreply@roster.local>"
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "Roster Management <noreply@roster.local>")
+
+# When sending real email, skip made-up test addresses (they would only bounce)
+EMAIL_SKIP_DOMAINS = ["example.com"] if os.getenv("EMAIL_MODE", "console") == "smtp" else []
 
 # Allow login with staff ID or email
 AUTHENTICATION_BACKENDS = ["roster.backends.StaffIdOrEmailBackend"]

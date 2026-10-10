@@ -214,18 +214,25 @@ def user_add(request):
         if form.is_valid():
             temp_password = get_random_string(12)  # cryptographically secure random string
             profile = create_staff_member(**form.cleaned_data, password=temp_password)
-            send_welcome_email(profile, temp_password, request.build_absolute_uri(reverse("login")))
+            email_sent = send_welcome_email(profile, temp_password, request.build_absolute_uri(reverse("login")))
 
             AuditLog.objects.create(
                 actor=request.user.username,
                 action="USER_CREATED",
                 details=f"{profile.staff_id} ({profile.get_role_display()})",
             )
-            messages.success(
-                request,
-                f"{profile.full_name} created with ID {profile.staff_id}. "
-                f"Login details were emailed to {profile.user.email}.",
-            )
+            if email_sent:
+                messages.success(
+                    request,
+                    f"{profile.full_name} created with ID {profile.staff_id}. "
+                    f"Login details were emailed to {profile.user.email}.",
+                )
+            else:
+                messages.warning(
+                    request,
+                    f"{profile.full_name} created with ID {profile.staff_id}, but the welcome "
+                    f"email could not be sent. Give them their login details another way.",
+                )
             if settings.DEBUG:
                 # Development only, so you can test logging in as the new user
                 messages.info(request, f"Development only - temporary password: {temp_password}")

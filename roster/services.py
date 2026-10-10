@@ -75,22 +75,17 @@ def update_staff_member(profile, *, first_name, last_name, email, phone_number,
 
 
 def send_welcome_email(profile, temp_password, login_url):
-    """Email a new user their staff ID and temporary password."""
-    send_mail(
-        subject="Your Roster Management account",
-        message=(
-            f"Hi {profile.user.first_name},\n\n"
-            f"An account has been created for you on Roster Management.\n\n"
-            f"Staff ID: {profile.staff_id}\n"
-            f"You can log in with your Staff ID or this email address.\n"
-            f"Temporary password: {temp_password}\n"
-            f"Log in here: {login_url}\n\n"
-            f"Please change your password after your first login "
-            f"(Change Password in the menu).\n"
-        ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[profile.user.email],
-    )
+    """Email a new user their staff ID and temporary password. Returns True if sent."""
+    lines = [
+        f"Hi {profile.user.first_name},", "",
+        "An account has been created for you on Roster Management.", "",
+        f"Staff ID: {profile.staff_id}",
+        "You can log in with your Staff ID or this email address.",
+        f"Temporary password: {temp_password}",
+        f"Log in here: {login_url}", "",
+        "Please change your password after your first login (Change Password in the menu).",
+    ]
+    return _send_email("Your Roster Management account", lines, profile.user.email)
 
 
 # ================================================================ Shift helpers
@@ -167,6 +162,9 @@ def _shift_detail_lines(shift):
 
 def _send_email(subject, lines, recipient):
     """Send one email. Returns False instead of crashing if it fails (e.g. mail server down)."""
+    domain = recipient.rsplit("@", 1)[-1].lower()
+    if domain in getattr(settings, "EMAIL_SKIP_DOMAINS", []):
+        return True  # dummy test address: nothing to send
     try:
         send_mail(
             subject=subject,
