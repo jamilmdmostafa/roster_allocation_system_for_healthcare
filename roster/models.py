@@ -123,6 +123,9 @@ class Shift(models.Model):
     @property
     def is_past(self):
         return self.end_at < timezone.now()
+    @property
+    def has_started(self):
+        return self.start_at <= timezone.now()
 
 
 class ShiftResponse(models.Model):
@@ -135,6 +138,9 @@ class ShiftResponse(models.Model):
     guard = models.ForeignKey(StaffProfile, on_delete=models.CASCADE, related_name="shift_responses")
     offered_at = models.DateTimeField(auto_now_add=True)
     accepted_at = models.DateTimeField(null=True, blank=True)
+        # Filled in if the guard later cancels this shift
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=500, blank=True)
 
     class Meta:
         unique_together = ("shift", "guard")

@@ -12,6 +12,9 @@ from .models import MIN_REST_HOURS, AuditLog, Notification, Shift, ShiftResponse
 REASON_OVERLAP = "already working at that time"
 REASON_REST = f"less than {MIN_REST_HOURS} hours' rest between shifts"
 
+# A cancellation less than this many hours before the shift starts is flagged as short notice
+SHORT_NOTICE_HOURS = 24
+
 
 class ShiftUnavailable(Exception):
     """The action can't go ahead. The message explains why."""
@@ -176,10 +179,17 @@ def _send_email(subject, lines, recipient):
         return False
 
 
-def send_new_shift_email(guard, shift, dashboard_url):
+def send_new_shift_email(guard, shift, dashboard_url, again=False):
     """Information-only email with the shift details (no button)."""
     start = timezone.localtime(shift.start_at)
-    lines = [f"Hi {guard.user.first_name},", "", "A new shift is available:", ""]
+    if again:
+        heading = "A shift is available again (the guard who had it has cancelled):"
+        subject = f"Shift available again: {shift.hospital_name} - {shift.ward}, {start:%d %b}"
+    else:
+        heading = "A new shift is available:"
+        subject = f"New shift: {shift.hospital_name} - {shift.ward}, {start:%d %b}"
+
+    lines = [f"Hi {guard.user.first_name},", "", heading, ""]
     lines += _shift_detail_lines(shift)
     lines += [
         "",
@@ -187,9 +197,7 @@ def send_new_shift_email(guard, shift, dashboard_url):
         "The first guard to accept gets the shift.",
         dashboard_url,
     ]
-    return _send_email(
-        f"New shift: {shift.hospital_name} - {shift.ward}, {start:%d %b}", lines, guard.user.email
-    )
+    return _send_email(subject, lines, guard.user.email)
 
 
 def send_assigned_email(guard, shift):
@@ -214,39 +222,83 @@ def send_removed_email(guard, shift):
     )
 
 
-# ================================================================ Releasing, accepting, assigning
+def send_cancellation_email_to_admins(guard, shift, reason, reoffered_count, short_notice):
+    start = timezone.localtime(shift.start_at)
+    lines = [f"{guard.full_name} ({guard.staff_id}) has cancelled this shift:", ""]
+    lines += _shift_detail_lines(shift)
+    lines += [
+        "",
+        f"Reason given: {reason}",
+        f"Short notice (under {SHORT_NOTICE_HOURS} hours): {'YES' if short_notice else 'No'}",
+        "",
+        f"The shift is open again and has been offered to {reoffered_count} guard(s).",
+        "If nobody accepts it, assign a guard from Shift Responses.",
+    ]
+    subject = (
+        f"{'SHORT NOTICE - ' if short_notice else ''}Shift cancelled: "
+        f"{shift.hospital_name} - {shift.ward}, {start:%d %b}"
+    )
+    admins = StaffProfile.objects.filter(
+        role=StaffProfile.Role.ADMIN, user__is_active=True
+    ).select_related("user")
+    for admin in admins:
+        _send_email(subject, lines, admin.user.email)
 
-def release_shift(shift, *, actor, dashboard_url):
+
+# ================================================================ Releasing, accepting, assigning, cancelling
+
+def release_shift(shift, *, actor, dashboard_url, reoffer=False):
     """
-    Offer a newly created shift to every eligible guard:
+    Offer a shift to every eligible guard:
     1. work out who is eligible (not busy, has had 6 hours' rest)
     2. save an offer + dashboard notification for each of them
     3. email each of them the shift details
+    reoffer=True is used after a cancellation.
     """
+    empty = {"eligible": [], "skipped": [], "email_failed": []}
+    if reoffer:
+        shift.refresh_from_db()
+        if shift.status != Shift.Status.OPEN:
+            return empty  # someone already took it
+
     eligible, skipped = find_eligible_guards(shift)
+
+    # Never offer a shift to a guard who has already cancelled it
+    cancelled_ids = set(
+        shift.responses.filter(cancelled_at__isnull=False).values_list("guard_id", flat=True)
+    )
+    eligible = [g for g in eligible if g.pk not in cancelled_ids]
+    skipped = [(g, r) for g, r in skipped if g.pk not in cancelled_ids]
+
     summary = shift_summary(shift)
+    prefix = "Available again: " if reoffer else ""
 
     with transaction.atomic():
-        AuditLog.objects.create(
-            shift=shift, actor=actor, action="SHIFT_CREATED",
-            details=f"{shift.hospital_name} / {shift.ward}, {summary}",
-        )
+        if not reoffer:
+            AuditLog.objects.create(
+                shift=shift, actor=actor, action="SHIFT_CREATED",
+                details=f"{shift.hospital_name} / {shift.ward}, {summary}",
+            )
         for guard in eligible:
             ShiftResponse.objects.get_or_create(shift=shift, guard=guard)
             Notification.objects.create(
                 recipient=guard,
                 kind=Notification.Kind.NEW_SHIFT,
                 shift=shift,
-                message=f"{shift.hospital_name} - {shift.ward}, {summary}"[:255],
+                message=f"{prefix}{shift.hospital_name} - {shift.ward}, {summary}"[:255],
             )
         skipped_text = ", ".join(f"{g.staff_id} ({reason})" for g, reason in skipped) or "none"
         AuditLog.objects.create(
-            shift=shift, actor="system", action="SHIFT_RELEASED",
+            shift=shift, actor="system",
+            action="SHIFT_REOFFERED" if reoffer else "SHIFT_RELEASED",
             details=f"Offered to {len(eligible)} guard(s). Skipped: {skipped_text}",
         )
 
     # Emails are sent after saving. One failed email doesn't stop the others.
-    email_failed = [g.staff_id for g in eligible if not send_new_shift_email(g, shift, dashboard_url)]
+    email_failed = [
+        g.staff_id for g in eligible
+        if not send_new_shift_email(g, shift, dashboard_url, again=reoffer)
+    ]
     if email_failed:
         AuditLog.objects.create(
             shift=shift, actor="system", action="EMAIL_FAILED", details=", ".join(email_failed),
@@ -264,6 +316,9 @@ def accept_shift(response):
     then sees the shift is already assigned - so two guards can never both get it.
     """
     guard = response.guard
+    if response.cancelled_at:
+        raise ShiftUnavailable("You cancelled this shift earlier, so you can't accept it again.")
+
     with transaction.atomic():
         shift = Shift.objects.select_for_update().get(pk=response.shift_id)
         # Also lock the guard, so the same guard can't grab two clashing shifts at once
@@ -358,3 +413,50 @@ def assign_shift(shift, guard, *, actor, override_rest=False):
     if previous:
         send_removed_email(previous, shift)
     return shift
+
+
+def cancel_shift(shift, guard, *, reason, dashboard_url):
+    """
+    A guard cancels a shift they were assigned to.
+    1. the shift goes back to Open (locked, all-or-nothing)
+    2. it is re-offered to every eligible guard, except anyone who cancelled it
+    3. admins get a red dashboard notification and an email
+    """
+    with transaction.atomic():
+        shift = Shift.objects.select_for_update().get(pk=shift.pk)
+        if shift.status != Shift.Status.ASSIGNED or shift.assigned_guard_id != guard.pk:
+            raise ShiftUnavailable("This shift is no longer assigned to you.")
+
+        now = timezone.now()
+        if shift.start_at <= now:
+            raise ShiftUnavailable(
+                "This shift has already started, so it can't be cancelled online. Please call your admin."
+            )
+
+        response, _ = ShiftResponse.objects.get_or_create(shift=shift, guard=guard)
+        response.cancelled_at = now
+        response.cancel_reason = reason
+        response.save(update_fields=["cancelled_at", "cancel_reason"])
+
+        shift.assigned_guard = None
+        shift.status = Shift.Status.OPEN
+        shift.save()
+
+        short_notice = shift.start_at - now < timedelta(hours=SHORT_NOTICE_HOURS)
+        AuditLog.objects.create(
+            shift=shift, actor=guard.staff_id, action="SHIFT_CANCELLED",
+            details=f"{'Short notice. ' if short_notice else ''}Reason: {reason}",
+        )
+
+    # Re-offer it straight away
+    result = release_shift(shift, actor="system", dashboard_url=dashboard_url, reoffer=True)
+    count = len(result["eligible"])
+
+    _notify_admins(
+        Notification.Kind.CANCELLATION, shift,
+        f"{'SHORT NOTICE: ' if short_notice else ''}{guard.staff_id} ({guard.full_name}) cancelled "
+        f"{shift.hospital_name} - {shift.ward}, {shift_summary(shift)}. "
+        f"Re-offered to {count} guard(s). Reason: {reason}",
+    )
+    send_cancellation_email_to_admins(guard, shift, reason, count, short_notice)
+    return result

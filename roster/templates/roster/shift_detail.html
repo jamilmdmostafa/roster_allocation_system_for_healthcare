@@ -40,7 +40,10 @@
           <li class="list-group-item d-flex justify-content-between gap-2">
             <span>{{ r.guard.staff_id }} - {{ r.guard.full_name }}</span>
             <span class="help text-end">
-              {% if r.accepted_at %}
+                {% if r.cancelled_at %}
+                <strong class="text-danger">Cancelled {{ r.cancelled_at|date:"d M, H:i" }}</strong><br>
+                Reason: {{ r.cancel_reason }}
+              {% elif r.accepted_at %}
                 <strong>Accepted {{ r.accepted_at|date:"d M, H:i:s" }}</strong>
               {% else %}
                 Offered {{ r.offered_at|date:"d M, H:i" }}

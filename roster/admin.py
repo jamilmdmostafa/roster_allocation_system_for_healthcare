@@ -66,7 +66,7 @@ class ShiftAdmin(admin.ModelAdmin):
 
 @admin.register(ShiftResponse)
 class ShiftResponseAdmin(admin.ModelAdmin):
-    list_display = ("shift", "guard", "offered_at", "accepted_at")
+    list_display = ("shift", "guard", "offered_at", "accepted_at", "cancelled_at")
 
 
 @admin.register(Notification)

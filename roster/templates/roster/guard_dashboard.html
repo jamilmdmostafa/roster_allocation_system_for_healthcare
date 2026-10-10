@@ -46,7 +46,7 @@
     <!-- Upcoming shifts -->
     <div class="card mb-4">
       <div class="card-header fw-semibold">My upcoming shifts</div>
-      {% include "roster/_shift_table.html" with shifts=upcoming_shifts empty_text="You have no upcoming shifts." %}
+        {% include "roster/_shift_table.html" with shifts=upcoming_shifts empty_text="You have no upcoming shifts." show_cancel=True %}
     </div>
 
     <!-- Previous shifts -->

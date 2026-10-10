@@ -20,6 +20,8 @@ from .services import (
     ShiftUnavailable,
     accept_shift,
     assign_shift,
+    cancel_shift,
+    SHORT_NOTICE_HOURS,
     check_guard_availability,
     create_staff_member,
     release_shift,
@@ -77,7 +79,8 @@ def guard_dashboard(request):
     # Shifts offered to this guard that nobody has taken yet and haven't started
     open_offers = (
         profile.shift_responses
-        .filter(shift__status=Shift.Status.OPEN, shift__start_at__gt=timezone.now())
+        .filter(shift__status=Shift.Status.OPEN, shift__start_at__gt=timezone.now(),
+                cancelled_at__isnull=True)
         .select_related("shift")
         .order_by("shift__start_at")
     )
@@ -113,6 +116,41 @@ def shift_accept(request, response_id):
             f"The details have been emailed to you.",
         )
     return redirect("guard_dashboard")
+@guard_required
+def shift_cancel(request, shift_id):
+    profile = request.user.profile
+    # assigned_guard=profile: a guard can only cancel their OWN shift
+    shift = get_object_or_404(
+        Shift, pk=shift_id, assigned_guard=profile, status=Shift.Status.ASSIGNED
+    )
+
+    if request.method == "POST":
+        reason = request.POST.get("reason", "").strip()
+        if not reason:
+            messages.error(request, "Please give a reason for cancelling.")
+        else:
+            try:
+                cancel_shift(
+                    shift, profile, reason=reason[:500],
+                    dashboard_url=request.build_absolute_uri(reverse("guard_dashboard")),
+                )
+            except ShiftUnavailable as error:
+                messages.error(request, str(error))
+            else:
+                messages.success(
+                    request,
+                    "Your shift has been cancelled. The admin has been notified "
+                    "and the shift has been offered to other guards.",
+                )
+            return redirect("guard_dashboard")
+
+    short_notice = shift.start_at - timezone.now() < timedelta(hours=SHORT_NOTICE_HOURS)
+    return render(request, "roster/shift_cancel.html", {
+        "shift": shift,
+        "summary": shift_summary(shift),
+        "short_notice": short_notice,
+        "short_notice_hours": SHORT_NOTICE_HOURS,
+    })
 
 
 @login_required
@@ -323,7 +361,7 @@ def shift_responses(request):
     acceptances = {
         r.shift_id: r
         for r in ShiftResponse.objects.filter(
-            shift__in=shifts, accepted_at__isnull=False
+                shift__in=shifts, accepted_at__isnull=False, cancelled_at__isnull=True
         ).select_related("guard__user")
     }
     rows = [(shift, acceptances.get(shift.pk)) for shift in shifts]

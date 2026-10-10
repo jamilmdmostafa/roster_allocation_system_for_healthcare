@@ -1,7 +1,12 @@
 {% if shifts %}
   <div class="table-responsive">
     <table class="table mb-0 align-middle">
-      <thead><tr><th>Hospital</th><th>Ward</th><th>Date</th><th>Time</th><th>Uniform</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Hospital</th><th>Ward</th><th>Date</th><th>Time</th><th>Uniform</th>
+          {% if show_cancel %}<th></th>{% endif %}
+        </tr>
+      </thead>
       <tbody>
         {% for shift in shifts %}
           <tr>
@@ -10,6 +15,15 @@
             <td>{{ shift.start_at|date:"D d M Y" }}</td>
             <td>{{ shift.start_at|date:"H:i" }} - {{ shift.end_at|date:"H:i" }}</td>
             <td>{{ shift.uniform|default:"-" }}</td>
+            {% if show_cancel %}
+              <td class="text-end">
+                {% if shift.has_started %}
+                  <span class="help">In progress</span>
+                {% else %}
+                  <a href="{% url 'shift_cancel' shift.pk %}" class="btn btn-sm btn-outline-danger">Cancel</a>
+                {% endif %}
+              </td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>

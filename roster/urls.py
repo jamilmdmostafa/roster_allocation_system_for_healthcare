@@ -32,6 +32,7 @@ urlpatterns = [
     path("my/dashboard/", views.guard_dashboard, name="guard_dashboard"),
     path("my/profile/", views.my_profile, name="my_profile"),
     path("my/offers/<int:response_id>/accept/", views.shift_accept, name="shift_accept"),
+    path("my/shifts/<int:shift_id>/cancel/", views.shift_cancel, name="shift_cancel"),
 
     # Shared
     path("notifications/read/", views.mark_notifications_read, name="mark_notifications_read"),
